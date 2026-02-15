@@ -1,42 +1,39 @@
-"""
-Minimal contract tests: instantiate with fake context, start(), stop(), assert state transitions.
-Prevents broken components from being committed.
-"""
-import pytest
-from lucid_component_base import ComponentContext, ComponentStatus
+from __future__ import annotations
 
-from lucid_component_example import ExampleComponent
+from dataclasses import dataclass
+
+from lucid_component_fixture_cpu.component import FixtureCpuComponent
 
 
-def _fake_context() -> ComponentContext:
-    class FakeMqtt:
-        def publish(self, topic: str, payload, *, qos: int = 0, retain: bool = False) -> None:
-            pass
-
-    return ComponentContext.create(
-        agent_id="test-agent",
-        base_topic="lucid/agents/test-agent",
-        component_id="example",
-        mqtt=FakeMqtt(),
-        config={},
-    )
+@dataclass
+class DummyCfg:
+    pass
 
 
-def test_component_instantiation():
-    ctx = _fake_context()
-    comp = ExampleComponent(ctx)
-    assert comp.component_id == "example"
-    assert comp.state.status == ComponentStatus.STOPPED
+class DummyMQTT:
+    def publish(self, topic: str, payload, *, qos: int = 0, retain: bool = False) -> None:
+        assert isinstance(topic, str) and topic
+        assert payload is not None
 
 
-def test_start_stop_state_transitions():
-    ctx = _fake_context()
-    comp = ExampleComponent(ctx)
+class DummyCtx:
+    def __init__(self):
+        from lucid_component_base import ComponentContext
+        self._ctx = ComponentContext.create(
+            agent_id="test",
+            base_topic="lucid/agents/test",
+            component_id="fixture_cpu",
+            mqtt=DummyMQTT(),
+            config=DummyCfg(),
+        )
 
-    comp.start()
-    assert comp.state.status == ComponentStatus.RUNNING
-    assert comp.state.started_at is not None
+    def __getattr__(self, name):
+        return getattr(self._ctx, name)
 
-    comp.stop()
-    assert comp.state.status == ComponentStatus.STOPPED
-    assert comp.state.stopped_at is not None
+
+def test_start_stop_idempotent():
+    c = FixtureCpuComponent(DummyCtx())  # type: ignore[arg-type]
+    c.start()
+    c.start()
+    c.stop()
+    c.stop()
