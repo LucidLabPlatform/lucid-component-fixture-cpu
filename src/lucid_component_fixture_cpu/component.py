@@ -1,8 +1,14 @@
+"""
+Fixture CPU component — unified MQTT contract.
+
+Publishes retained metadata, status, state, cfg, cfg/telemetry.
+Stream telemetry: cpu_percent, load (gated).
+Commands: cmd/reset, cmd/identify → evt/<action>/result.
+"""
 from __future__ import annotations
 
+import json
 import threading
-from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Optional
 
 import psutil
@@ -10,39 +16,48 @@ import psutil
 from lucid_component_base import Component, ComponentContext
 
 
-@dataclass(frozen=True)
-class CpuMetrics:
-    cpu_percent: float
-    temperature_c: Optional[float]
-    ts: str
-
-
 class FixtureCpuComponent(Component):
     """
-    Test fixture component: periodically publishes CPU metrics as telemetry.
+    Test fixture component: CPU metrics under unified topic structure.
 
-    Telemetry topic:
-      {base_topic}/components/{component_id}/evt/telemetry
+    Retained: metadata, status, state, cfg, cfg/telemetry.
+    Stream: logs, telemetry/cpu_percent, telemetry/load (gated).
+    Commands: reset, identify.
     """
 
-    _PUBLISH_INTERVAL_SECONDS = 5.0
+    _PUBLISH_INTERVAL_SECONDS = 2.0
 
-    def __init__(self, context: ComponentContext):
+    def __init__(self, context: ComponentContext) -> None:
         super().__init__(context)
         self._log = self.context.logger()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
-        self._temperature_available = True
 
     @property
     def component_id(self) -> str:
         return "fixture_cpu"
 
-    def _start(self) -> None:
-        self._temperature_available = self._detect_temperature_available()
-        if not self._temperature_available:
-            self._log.info("CPU temperature is unavailable on this host")
+    def capabilities(self) -> list[str]:
+        return ["reset", "identify"]
 
+    def metadata(self) -> dict:
+        out = super().metadata()
+        out["capabilities"] = self.capabilities()
+        return out
+
+    def get_state_payload(self) -> dict:
+        try:
+            cpu = float(psutil.cpu_percent(interval=None))
+        except Exception:
+            cpu = 0.0
+        try:
+            load = float(psutil.getloadavg()[0]) if hasattr(psutil, "getloadavg") else 0.0
+        except Exception:
+            load = 0.0
+        return {"cpu_percent": cpu, "load": load}
+
+    def _start(self) -> None:
+        self._publish_all_retained()
         self._stop_event.clear()
         self._thread = threading.Thread(
             target=self._run_loop,
@@ -54,85 +69,63 @@ class FixtureCpuComponent(Component):
 
     def _stop(self) -> None:
         t = self._thread
-        if not t:
-            return
-
-        self._stop_event.set()
-        t.join(timeout=2.0)
-        if t.is_alive():
-            self._log.warning("CPU loop thread did not stop within timeout")
-            return
-
-        self._thread = None
+        if t:
+            self._stop_event.set()
+            t.join(timeout=2.0)
+            if t.is_alive():
+                self._log.warning("CPU loop thread did not stop within timeout")
+            self._thread = None
         self._log.info("Stopped component: %s", self.component_id)
+
+    def _publish_all_retained(self) -> None:
+        self.publish_metadata()
+        self.publish_status()
+        self.publish_state()
+        self.publish_cfg({})
+        self.publish_telemetry_cfg({
+            "enabled": True,
+            "metrics": {"cpu_percent": True, "load": True},
+            "interval_s": 2,
+            "change_threshold_percent": 2.0,
+        })
+        self.set_telemetry_config({
+            "enabled": True,
+            "metrics": {"cpu_percent": True, "load": True},
+            "interval_s": 2,
+            "change_threshold_percent": 2.0,
+        })
 
     def _run_loop(self) -> None:
         while not self._stop_event.is_set():
             try:
-                self._publish_metrics()
+                state = self.get_state_payload()
+                self.publish_state(state)
+                cpu = state.get("cpu_percent", 0.0)
+                load = state.get("load", 0.0)
+                if self.should_publish_telemetry("cpu_percent", cpu):
+                    self.publish_telemetry("cpu_percent", cpu)
+                if self.should_publish_telemetry("load", load):
+                    self.publish_telemetry("load", load)
             except Exception:
                 self._log.exception("Failed to publish fixture CPU telemetry")
 
             if self._stop_event.wait(self._PUBLISH_INTERVAL_SECONDS):
                 break
 
-    def _publish_metrics(self) -> None:
-        metrics = self._read_metrics()
-        payload = {
-            "type": "cpu",
-            "fixture": True,
-            "cpu_percent": metrics.cpu_percent,
-            "temperature_c": metrics.temperature_c,
-            "ts": metrics.ts,
-        }
-        topic = self.context.topic("evt/telemetry")
-        self.context.mqtt.publish(topic, payload, qos=0, retain=False)
-
-    def _read_metrics(self) -> CpuMetrics:
-        cpu_percent = float(psutil.cpu_percent(interval=None))
-        temperature_c = self._read_temperature()
-        return CpuMetrics(
-            cpu_percent=cpu_percent,
-            temperature_c=temperature_c,
-            ts=self._utc_timestamp(),
-        )
-
-    def _read_temperature(self) -> Optional[float]:
-        if not self._temperature_available:
-            return None
-
-        for entry in self._temperature_entries():
-            current = getattr(entry, "current", None)
-            if current is None:
-                continue
-            try:
-                return float(current)
-            except (TypeError, ValueError):
-                continue
-        return None
-
-    def _detect_temperature_available(self) -> bool:
-        return bool(self._temperature_entries())
-
-    def _temperature_entries(self) -> list[object]:
-        sensors_fn = getattr(psutil, "sensors_temperatures", None)
-        if not callable(sensors_fn):
-            return []
-
+    def on_cmd_reset(self, payload_str: str) -> None:
+        """Handle cmd/reset: parse request_id, publish evt/reset/result."""
         try:
-            sensors = sensors_fn()
-        except Exception:
-            return []
+            payload = json.loads(payload_str) if payload_str else {}
+            request_id = payload.get("request_id", "")
+        except json.JSONDecodeError:
+            request_id = ""
+        self.publish_result("reset", request_id, ok=True, error=None)
 
-        if not isinstance(sensors, dict):
-            return []
-
-        entries: list[object] = []
-        for values in sensors.values():
-            if isinstance(values, list):
-                entries.extend(values)
-        return entries
-
-    @staticmethod
-    def _utc_timestamp() -> str:
-        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    def on_cmd_identify(self, payload_str: str) -> None:
+        """Handle cmd/identify: parse request_id, publish evt/identify/result."""
+        try:
+            payload = json.loads(payload_str) if payload_str else {}
+            request_id = payload.get("request_id", "")
+        except json.JSONDecodeError:
+            request_id = ""
+        self.publish_result("identify", request_id, ok=True, error=None)
