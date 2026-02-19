@@ -87,19 +87,17 @@ class FixtureCpuComponent(Component):
         self.publish_metadata()
         self.publish_status()
         self.publish_state()
-        self.publish_cfg({})
-        self.publish_telemetry_cfg({
+        # Set and publish unified cfg with telemetry nested
+        # Metrics are derived from state, so we enable the ones we want
+        telemetry_cfg = {
             "enabled": True,
-            "metrics": {"cpu_percent": True, "load": True},
+            "metrics": {"cpu_percent": True, "load": True},  # Enable metrics that exist in state
             "interval_s": 2,
             "change_threshold_percent": 2.0,
-        })
-        self.set_telemetry_config({
-            "enabled": True,
-            "metrics": {"cpu_percent": True, "load": True},
-            "interval_s": 2,
-            "change_threshold_percent": 2.0,
-        })
+        }
+        self.set_telemetry_config(telemetry_cfg)
+        # publish_cfg() will automatically include all state metrics, merging with current config
+        self.publish_cfg()
 
     def _run_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -137,7 +135,7 @@ class FixtureCpuComponent(Component):
         self.publish_result("ping", request_id, ok=True, error=None)
 
     def on_cmd_cfg_set(self, payload_str: str) -> None:
-        """Handle cmd/cfg/set → evt/cfg/set/result. Applies telemetry config from payload["set"]."""
+        """Handle cmd/cfg/set → evt/cfg/set/result. Applies config from payload["set"] (telemetry nested)."""
         try:
             payload = json.loads(payload_str) if payload_str else {}
             request_id = payload.get("request_id", "")
@@ -157,28 +155,61 @@ class FixtureCpuComponent(Component):
             return
 
         try:
-            if set_dict:
-                # Merge into current telemetry config and apply
+            applied = {}
+            
+            # Handle nested telemetry config
+            if "telemetry" in set_dict:
+                telemetry_set = set_dict["telemetry"]
+                if not isinstance(telemetry_set, dict):
+                    self.publish_cfg_set_result(
+                        request_id=request_id,
+                        ok=False,
+                        applied=None,
+                        error="telemetry must be an object",
+                        ts=_utc_iso(),
+                    )
+                    return
+                
+                # Get available metrics from state to validate
+                state_payload = self.get_state_payload()
+                available_metrics = set(state_payload.keys()) if isinstance(state_payload, dict) else set()
+                
+                # Merge into current telemetry config
                 current = {
                     "enabled": self._telemetry_cfg.get("enabled", True),
                     "metrics": dict(self._telemetry_cfg.get("metrics", {})),
                     "interval_s": self._telemetry_cfg.get("interval_s", 2),
                     "change_threshold_percent": self._telemetry_cfg.get("change_threshold_percent", 2.0),
                 }
-                if "enabled" in set_dict:
-                    current["enabled"] = bool(set_dict["enabled"])
-                if "metrics" in set_dict and isinstance(set_dict["metrics"], dict):
-                    current["metrics"] = dict(set_dict["metrics"])
-                if "interval_s" in set_dict:
-                    current["interval_s"] = int(set_dict["interval_s"])
-                if "change_threshold_percent" in set_dict:
-                    current["change_threshold_percent"] = float(set_dict["change_threshold_percent"])
+                if "enabled" in telemetry_set:
+                    current["enabled"] = bool(telemetry_set["enabled"])
+                if "metrics" in telemetry_set and isinstance(telemetry_set["metrics"], dict):
+                    # Merge metrics, but filter out any that don't exist in state
+                    new_metrics = dict(telemetry_set["metrics"])
+                    # Only keep metrics that exist in state
+                    filtered_metrics = {k: v for k, v in new_metrics.items() if k in available_metrics}
+                    if filtered_metrics != new_metrics:
+                        self._log.warning("Filtered out metrics not in state: %s", set(new_metrics.keys()) - available_metrics)
+                    current["metrics"] = filtered_metrics
+                    # Ensure all state metrics are present (add missing ones as False)
+                    for metric in available_metrics:
+                        if metric not in current["metrics"]:
+                            current["metrics"][metric] = False
+                if "interval_s" in telemetry_set:
+                    current["interval_s"] = int(telemetry_set["interval_s"])
+                if "change_threshold_percent" in telemetry_set:
+                    current["change_threshold_percent"] = float(telemetry_set["change_threshold_percent"])
+                
                 self.set_telemetry_config(current)
-                self.publish_telemetry_cfg(current)
+                applied["telemetry"] = telemetry_set
+            
+            # Republish unified cfg (will include all state metrics)
+            self.publish_cfg()
+            
             self.publish_cfg_set_result(
                 request_id=request_id,
                 ok=True,
-                applied=set_dict if set_dict else None,
+                applied=applied if applied else None,
                 error=None,
                 ts=_utc_iso(),
             )
