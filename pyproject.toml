@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61", "wheel", "setuptools_scm"]
+requires = ["setuptools>=69", "setuptools_scm[toml]>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "LUCID fixture component that publishes CPU metrics for integration testing."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = {text = "MIT"}
 authors = [{ name = "LUCID" }]
 dependencies = [
   "lucid-component-base @ git+https://github.com/LucidLabPlatform/lucid-component-base@v0.5.2",
@@ -21,8 +21,12 @@ dev = ["pytest"]
 [project.entry-points."lucid.components"]
 fixture_cpu = "lucid_component_fixture_cpu.component:FixtureCpuComponent"
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["lucid_component_fixture_cpu*"]
 
 [tool.setuptools_scm]
 version_scheme = "no-guess-dev"
