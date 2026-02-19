@@ -52,7 +52,8 @@ class FixtureCpuComponent(Component):
 
     def get_state_payload(self) -> dict:
         try:
-            cpu = float(psutil.cpu_percent(interval=None))
+            # Use interval=0.1 to ensure we get a fresh measurement, not cached/zero
+            cpu = float(psutil.cpu_percent(interval=0.1))
         except Exception:
             cpu = 0.0
         try:
