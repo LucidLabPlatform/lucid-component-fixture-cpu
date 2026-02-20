@@ -165,6 +165,11 @@ class FixtureCpuComponent(Component):
         try:
             applied = {}
             
+            # Handle logs_enabled config
+            if "logs_enabled" in set_dict:
+                self._logs_enabled = bool(set_dict["logs_enabled"])
+                applied["logs_enabled"] = self._logs_enabled
+            
             # Handle nested telemetry config
             if "telemetry" in set_dict:
                 telemetry_set = set_dict["telemetry"]
