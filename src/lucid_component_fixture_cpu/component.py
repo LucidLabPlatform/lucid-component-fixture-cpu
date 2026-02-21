@@ -1,8 +1,8 @@
 """
 Fixture CPU component — unified MQTT contract.
 
-Publishes retained metadata, status, state, cfg, cfg/telemetry.
-Stream telemetry: cpu_percent, load (gated).
+Publishes retained metadata, status, state, cfg (cfg includes nested telemetry).
+Streams telemetry: cpu_percent, load (gated by cfg).
 Commands: cmd/reset, cmd/ping, cmd/cfg/set → evt/<action>/result.
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ class FixtureCpuComponent(Component):
     """
     Test fixture component: CPU metrics under unified topic structure.
 
-    Retained: metadata, status, state, cfg, cfg/telemetry.
+    Retained: metadata, status, state, cfg (includes nested telemetry).
     Stream: logs, telemetry/cpu_percent, telemetry/load (gated).
     Commands: reset, ping, cfg/set.
     """

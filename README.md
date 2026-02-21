@@ -1,32 +1,66 @@
-# lucid-component-example
+# lucid-component-fixture-cpu
 
-Template LUCID component. Replace this with your component name and description.
+LUCID fixture component that publishes CPU metrics for integration testing. Used by **lucid-agent-core** when loaded from the component registry.
+
+---
 
 ## Purpose
 
-Example/stub component demonstrating the minimal structure required for a LUCID component. Use this repo as a template when creating new components.
+Demonstrates the full LUCID component contract:
 
-## Configuration keys
+- **Retained:** metadata, status, state, cfg (nested telemetry config).
+- **Stream:** logs (rate-limited, batched), telemetry for `cpu_percent` and `load` (gated by cfg).
+- **Commands:** reset, ping, cfg/set → results on `evt/<action>/result`.
 
-None. This component has no configuration.
+---
 
-(When you add config, list keys here so operators know what to set.)
+## Installation and build
 
-## MQTT topics used
+Development (editable, from repo):
 
-None. This component does not publish or subscribe.
+```bash
+pip install -e .
+```
 
-(When you add MQTT, list topics here, e.g. `{base_topic}/components/{component_id}/state`.)
+Build for distribution:
 
-## Versioning
+```bash
+pip install build
+python -m build
+```
 
-Version is derived from Git tags via [setuptools_scm](https://github.com/pypa/setuptools_scm). Do not set `version` in `pyproject.toml` manually.
+Version comes from the git tag via [setuptools_scm](https://github.com/pypa/setuptools_scm). Do not set `version` in `pyproject.toml` manually.
 
-## Entry point name
+---
 
-Registered under the `lucid.components` entry point group for discovery by agent-core:
+## Configuration (cfg)
 
-- **Entry point name:** `example`
-- **Module path:** `lucid_component_example.component:ExampleComponent`
+| Key | Description |
+|-----|-------------|
+| `cfg.telemetry.metrics` | Per-metric: `enabled`, `interval_s`, `change_threshold_percent` for `cpu_percent`, `load`. |
+| `cfg.logs_enabled` | When true, component logs are streamed to the component `logs` topic (rate-limited, batched). |
 
-Ensure your component’s entry point name and class are consistent across all LUCID components.
+---
+
+## Entry point (agent-core discovery)
+
+Registered under `lucid.components` so agent-core can load the component:
+
+| Field | Value |
+|-------|--------|
+| **Entry point name** | `fixture_cpu` |
+| **Module path** | `lucid_component_fixture_cpu.component:FixtureCpuComponent` |
+
+---
+
+## Dependencies
+
+- **lucid-component-base** — component base class and context.
+- **psutil** — CPU and load metrics.
+
+---
+
+## Relation to other packages
+
+- **lucid-component-base** defines the component contract; this package implements it.
+- **lucid-agent-core** discovers and runs this component when it is installed and enabled in the registry.
