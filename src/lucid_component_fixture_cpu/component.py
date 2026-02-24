@@ -35,6 +35,7 @@ class FixtureCpuComponent(Component):
     def __init__(self, context: ComponentContext) -> None:
         super().__init__(context)
         self._log = self.context.logger()
+        self._logs_enabled = True
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
