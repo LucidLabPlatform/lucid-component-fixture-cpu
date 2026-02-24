@@ -18,7 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest"]
 
-[project.entry-points."lucid.components"]
+[project.entry-points."lucid_components"]
 fixture_cpu = "lucid_component_fixture_cpu.component:FixtureCpuComponent"
 
 [tool.setuptools]

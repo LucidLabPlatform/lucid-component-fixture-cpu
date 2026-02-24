@@ -35,7 +35,6 @@ class FixtureCpuComponent(Component):
     def __init__(self, context: ComponentContext) -> None:
         super().__init__(context)
         self._log = self.context.logger()
-        self._logs_enabled = True
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -165,11 +164,10 @@ class FixtureCpuComponent(Component):
 
         try:
             applied = {}
-            
-            # Handle logs_enabled config
-            if "logs_enabled" in set_dict:
-                self._logs_enabled = bool(set_dict["logs_enabled"])
-                applied["logs_enabled"] = self._logs_enabled
+
+            if "log_level" in set_dict:
+                self.apply_log_level(str(set_dict["log_level"]))
+                applied["log_level"] = self._log_level
             
             # Handle nested telemetry config
             if "telemetry" in set_dict:
