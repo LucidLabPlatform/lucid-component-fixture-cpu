@@ -90,17 +90,15 @@ class FixtureCpuComponent(Component):
         # Set and publish unified cfg with telemetry nested
         # Metrics are derived from state, so we enable the ones we want with per-metric configs
         telemetry_cfg = {
-            "metrics": {
-                "cpu_percent": {
-                    "enabled": True,
-                    "interval_s": 2,
-                    "change_threshold_percent": 2.0,
-                },
-                "load": {
-                    "enabled": True,
-                    "interval_s": 2,
-                    "change_threshold_percent": 2.0,
-                },
+            "cpu_percent": {
+                "enabled": True,
+                "interval_s": 2,
+                "change_threshold_percent": 2.0,
+            },
+            "load": {
+                "enabled": True,
+                "interval_s": 2,
+                "change_threshold_percent": 2.0,
             },
         }
         self.set_telemetry_config(telemetry_cfg)
@@ -187,7 +185,7 @@ class FixtureCpuComponent(Component):
                 available_metrics = set(state_payload.keys()) if isinstance(state_payload, dict) else set()
                 
                 # Get current telemetry config
-                current_metrics = dict(self._telemetry_cfg.get("metrics", {}))
+                current_metrics = dict(self._telemetry_cfg)
                 
                 # Merge metrics config from set_dict
                 if "metrics" in telemetry_set and isinstance(telemetry_set["metrics"], dict):
@@ -229,7 +227,7 @@ class FixtureCpuComponent(Component):
                             }
                 
                 # Update telemetry config
-                self.set_telemetry_config({"metrics": current_metrics})
+                self.set_telemetry_config(current_metrics)
                 applied["telemetry"] = telemetry_set
             
             # Republish unified cfg (will include all state metrics with per-metric configs)
