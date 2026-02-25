@@ -1,13 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from lucid_component_fixture_cpu.component import FixtureCpuComponent
-
-
-@dataclass
-class DummyCfg:
-    pass
 
 
 class DummyMQTT:
@@ -24,7 +17,7 @@ class DummyCtx:
             base_topic="lucid/agents/test",
             component_id="fixture_cpu",
             mqtt=DummyMQTT(),
-            config=DummyCfg(),
+            config={},
         )
 
     def __getattr__(self, name):
