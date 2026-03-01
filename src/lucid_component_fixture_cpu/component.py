@@ -3,7 +3,8 @@ Fixture CPU component — unified MQTT contract.
 
 Publishes retained metadata, status, state, cfg (cfg includes nested telemetry).
 Streams telemetry: cpu_percent, load (gated by cfg).
-Commands: cmd/reset, cmd/ping, cmd/cfg/set → evt/<action>/result.
+Commands: cmd/reset, cmd/ping, cmd/cfg/set, cmd/cfg/logging/set,
+cmd/cfg/telemetry/set → evt/<action>/result.
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ class FixtureCpuComponent(Component):
 
     Retained: metadata, status, state, cfg (includes nested telemetry).
     Stream: logs, telemetry/cpu_percent, telemetry/load (gated).
-    Commands: reset, ping, cfg/set.
+    Commands: reset, ping, cfg/set, cfg/logging/set, cfg/telemetry/set.
     """
 
     _PUBLISH_INTERVAL_SECONDS = 2.0
@@ -141,111 +142,129 @@ class FixtureCpuComponent(Component):
         self.publish_result("ping", request_id, ok=True, error=None)
 
     def on_cmd_cfg_set(self, payload_str: str) -> None:
-        """Handle cmd/cfg/set → evt/cfg/set/result. Applies config from payload["set"] (telemetry nested)."""
-        try:
-            payload = json.loads(payload_str) if payload_str else {}
-            request_id = payload.get("request_id", "")
-            set_dict = payload.get("set") or {}
-        except json.JSONDecodeError:
-            request_id = ""
-            set_dict = {}
-
-        if not isinstance(set_dict, dict):
+        """Handle cmd/cfg/set → evt/cfg/set/result. fixture_cpu has no general /cfg keys."""
+        request_id, set_dict, parse_error = self._parse_cfg_set_payload(payload_str)
+        if parse_error:
             self.publish_cfg_set_result(
                 request_id=request_id,
                 ok=False,
                 applied=None,
-                error="payload 'set' must be an object",
+                error=parse_error,
                 ts=_utc_iso(),
+                action="cfg/set",
+            )
+            return
+
+        unknown = sorted(set_dict.keys())
+        if unknown:
+            self.publish_cfg_set_result(
+                request_id=request_id,
+                ok=False,
+                applied=None,
+                error=f"unknown cfg key(s): {', '.join(unknown)}",
+                ts=_utc_iso(),
+                action="cfg/set",
+            )
+            return
+
+        self.publish_cfg_general()
+        self.publish_cfg_set_result(
+            request_id=request_id,
+            ok=True,
+            applied=None,
+            error=None,
+            ts=_utc_iso(),
+            action="cfg/set",
+        )
+
+    def on_cmd_cfg_logging_set(self, payload_str: str) -> None:
+        super().on_cmd_cfg_logging_set(payload_str)
+
+    def on_cmd_cfg_telemetry_set(self, payload_str: str) -> None:
+        """Handle cmd/cfg/telemetry/set → evt/cfg/telemetry/set/result."""
+        request_id, set_dict, parse_error = self._parse_cfg_set_payload(payload_str)
+        if parse_error:
+            self.publish_cfg_set_result(
+                request_id=request_id,
+                ok=False,
+                applied=None,
+                error=parse_error,
+                ts=_utc_iso(),
+                action="cfg/telemetry/set",
             )
             return
 
         try:
-            applied = {}
+            # Get available metrics from state to validate
+            state_payload = self.get_state_payload()
+            available_metrics = set(state_payload.keys()) if isinstance(state_payload, dict) else set()
 
-            if "log_level" in set_dict:
-                self.apply_log_level(str(set_dict["log_level"]))
-                applied["log_level"] = self._log_level
-            
-            # Handle nested telemetry config
-            if "telemetry" in set_dict:
-                telemetry_set = set_dict["telemetry"]
-                if not isinstance(telemetry_set, dict):
+            # Get current telemetry config
+            current_metrics = dict(self._telemetry_cfg)
+
+            for metric_name, metric_cfg in set_dict.items():
+                # Only process metrics that exist in state
+                if metric_name not in available_metrics:
+                    self._log.warning("Ignoring metric not in state: %s", metric_name)
+                    continue
+
+                # Merge metric config
+                if metric_name in current_metrics and isinstance(current_metrics[metric_name], dict):
+                    existing = current_metrics[metric_name]
+                else:
+                    existing = {}
+
+                if isinstance(metric_cfg, bool):
+                    metric_cfg = {"enabled": metric_cfg}
+                if not isinstance(metric_cfg, dict):
                     self.publish_cfg_set_result(
                         request_id=request_id,
                         ok=False,
                         applied=None,
-                        error="telemetry must be an object",
+                        error=f"telemetry metric '{metric_name}' must be an object or boolean",
                         ts=_utc_iso(),
+                        action="cfg/telemetry/set",
                     )
                     return
-                
-                # Get available metrics from state to validate
-                state_payload = self.get_state_payload()
-                available_metrics = set(state_payload.keys()) if isinstance(state_payload, dict) else set()
-                
-                # Get current telemetry config
-                current_metrics = dict(self._telemetry_cfg)
-                
-                # Merge metrics config from set_dict
-                if "metrics" in telemetry_set and isinstance(telemetry_set["metrics"], dict):
-                    for metric_name, metric_cfg in telemetry_set["metrics"].items():
-                        # Only process metrics that exist in state
-                        if metric_name not in available_metrics:
-                            self._log.warning("Ignoring metric not in state: %s", metric_name)
-                            continue
-                        
-                        # Merge metric config
-                        if metric_name in current_metrics and isinstance(current_metrics[metric_name], dict):
-                            # Deep merge existing config
-                            current_metrics[metric_name] = {
-                                **current_metrics[metric_name],
-                                **metric_cfg,
-                            }
-                            # Ensure all fields are present
-                            if "enabled" not in current_metrics[metric_name]:
-                                current_metrics[metric_name]["enabled"] = False
-                            if "interval_s" not in current_metrics[metric_name]:
-                                current_metrics[metric_name]["interval_s"] = 2
-                            if "change_threshold_percent" not in current_metrics[metric_name]:
-                                current_metrics[metric_name]["change_threshold_percent"] = 2.0
-                        else:
-                            # New metric config
-                            current_metrics[metric_name] = {
-                                "enabled": bool(metric_cfg.get("enabled", False)) if isinstance(metric_cfg, dict) else bool(metric_cfg),
-                                "interval_s": int(metric_cfg.get("interval_s", 2)) if isinstance(metric_cfg, dict) else 2,
-                                "change_threshold_percent": float(metric_cfg.get("change_threshold_percent", 2.0)) if isinstance(metric_cfg, dict) else 2.0,
-                            }
-                    
-                    # Ensure all state metrics are present (add missing ones with defaults)
-                    for metric_name in available_metrics:
-                        if metric_name not in current_metrics:
-                            current_metrics[metric_name] = {
-                                "enabled": False,
-                                "interval_s": 2,
-                                "change_threshold_percent": 2.0,
-                            }
-                
-                # Update telemetry config
-                self.set_telemetry_config(current_metrics)
-                applied["telemetry"] = telemetry_set
-            
-            # Republish unified cfg (will include all state metrics with per-metric configs)
-            self.publish_cfg()
-            
+
+                current_metrics[metric_name] = {
+                    **existing,
+                    **metric_cfg,
+                }
+
+                if "enabled" not in current_metrics[metric_name]:
+                    current_metrics[metric_name]["enabled"] = False
+                if "interval_s" not in current_metrics[metric_name]:
+                    current_metrics[metric_name]["interval_s"] = 2
+                if "change_threshold_percent" not in current_metrics[metric_name]:
+                    current_metrics[metric_name]["change_threshold_percent"] = 2.0
+
+            # Ensure all state metrics are present (add missing ones with defaults)
+            for metric_name in available_metrics:
+                if metric_name not in current_metrics:
+                    current_metrics[metric_name] = {
+                        "enabled": False,
+                        "interval_s": 2,
+                        "change_threshold_percent": 2.0,
+                    }
+
+            self.set_telemetry_config(current_metrics)
+            self.publish_cfg_telemetry()
             self.publish_cfg_set_result(
                 request_id=request_id,
                 ok=True,
-                applied=applied if applied else None,
+                applied=set_dict if set_dict else None,
                 error=None,
                 ts=_utc_iso(),
+                action="cfg/telemetry/set",
             )
         except Exception as exc:
-            self._log.exception("Failed to apply cfg/set")
+            self._log.exception("Failed to apply cfg/telemetry/set")
             self.publish_cfg_set_result(
                 request_id=request_id,
                 ok=False,
                 applied=None,
                 error=str(exc),
                 ts=_utc_iso(),
+                action="cfg/telemetry/set",
             )

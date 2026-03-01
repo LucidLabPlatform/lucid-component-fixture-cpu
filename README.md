@@ -10,7 +10,7 @@ Demonstrates the full LUCID component contract:
 
 - **Retained:** metadata, status, state, cfg (nested telemetry config).
 - **Stream:** logs (rate-limited, batched), telemetry for `cpu_percent` and `load` (gated by cfg).
-- **Commands:** reset, ping, cfg/set → results on `evt/<action>/result`.
+- **Commands:** reset, ping, cfg/set, cfg/logging/set, cfg/telemetry/set → results on `evt/<action>/result`.
 
 ---
 
